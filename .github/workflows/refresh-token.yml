@@ -1,0 +1,58 @@
+name: Refresh BeachCam token
+
+# Re-bakes a fresh ~24h stream token into index.html so the page keeps
+# working without anyone touching it. Runs on GitHub's servers.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # every 6 hours
+  workflow_dispatch:          # allow manual run from the Actions tab
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-token
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch fresh token
+        run: |
+          for i in 1 2 3; do
+            TOK=$(curl -fsS "https://beachcam.meo.pt/api/video-token" || true)
+            if [ "${#TOK}" -ge 40 ]; then echo "$TOK" > token.txt; break; fi
+            echo "attempt $i failed, retrying…"; sleep 5
+          done
+          test -s token.txt
+
+      - name: Bake token into index.html
+        run: |
+          python3 - <<'PY'
+          import re
+          tok = open('token.txt').read().strip()
+          html = open('index.html', encoding='utf-8').read()
+          new = re.sub(r'const BAKED_TOKEN = "[^"]*";',
+                       'const BAKED_TOKEN = "%s";' % tok, html, count=1)
+          open('index.html','w',encoding='utf-8').write(new)
+          print('token length', len(tok))
+          PY
+          rm -f token.txt
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- index.html; then
+            echo "Token unchanged — nothing to commit."
+          else
+            git add index.html
+            git commit -m "chore: refresh stream token"
+            git push
+          fi
