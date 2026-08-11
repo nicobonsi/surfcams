@@ -201,7 +201,9 @@ function tokenWorks(t){
 // Pick the first token that genuinely works, in priority order:
 // URL #token=… (from an iOS Shortcut) > saved > baked. Self-heals a bad saved token.
 async function initToken(){
-  const hashTok = normalizeToken(new URLSearchParams(location.hash.slice(1)).get('token'));
+  // Parse #token=… manually — URLSearchParams would turn '+' (valid base64) into a space.
+  const hm = /(?:^|[#&])token=([^&]+)/.exec(location.hash || '');
+  const hashTok = normalizeToken(hm ? hm[1] : '');
   if(hashTok){ history.replaceState(null,'',location.pathname+location.search); }
   const stored = localStorage.getItem(LS_KEY);
   const candidates = [];
