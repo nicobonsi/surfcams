@@ -150,10 +150,11 @@
       <li>Select&nbsp;all (Ctrl/Cmd&nbsp;+&nbsp;A), copy it, come back here and paste below, then <b>Apply</b>.</li>
     </ol>
     <textarea id="tokInput" placeholder="Paste the token text here…" spellcheck="false"></textarea>
+    <div id="tokErr" style="color:#ff8f8f;font-size:12.5px;min-height:16px;margin-top:6px"></div>
     <div class="row">
       <button class="spacer" onclick="window.open('https://beachcam.meo.pt/api/video-token','_blank')">Open token page ↗</button>
       <button onclick="closeRefresh()">Cancel</button>
-      <button class="primary" onclick="applyToken()">Apply</button>
+      <button class="primary" id="applyBtn" onclick="applyToken()">Apply</button>
     </div>
   </div>
 </div>
@@ -174,18 +175,53 @@ const CAMS = [
 ];
 
 // Baked-in token (valid ~24h from build). Refresh overrides it in localStorage.
-const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMC8yMDI2IDU6NDM6OSBQTSZoYXNoX3ZhbHVlPStNTEMrWTdkWVpJZWlGek1MMGFVVlE9PSZ2YWxpZG1pbnV0ZXM9MTQ0MCZpZD0yMjZmNGE0ZC05NDg0LTQ1YWYtYjQ1Ni05ODhjNDcwMjUwYmY=";
+const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMS8yMDI2IDY6MjQ6MjcgQU0maGFzaF92YWx1ZT1VdllxUmNsaHhzZitmOWRlRmozQ0ZBPT0mdmFsaWRtaW51dGVzPTE0NDAmaWQ9MzI1MzBiMzYtZTM2OS00ZTM1LWJjMDMtN2QwYjNjYzI0MzBj";
 const LS_KEY = "beachcam_vtoken";
+// A token-protected stream we can probe to check whether a token is actually valid.
+const PROBE = "https://video-auth1.iol.pt/auth-beachcam/carcavelos/playlist.m3u8";
+
+// The token currently in use (validated). Falls back to baked until proven otherwise.
+let activeToken = BAKED_TOKEN;
 
 // ---- Token helpers -------------------------------------------------------
-function getToken(){
-  const stored = localStorage.getItem(LS_KEY);
-  if(!stored) return BAKED_TOKEN;
-  const es = tokenExpiry(stored), eb = tokenExpiry(BAKED_TOKEN);
-  if(es && eb) return es >= eb ? stored : BAKED_TOKEN;  // prefer the later-expiring token
-  return stored || BAKED_TOKEN;
-}
+function getToken(){ return activeToken || BAKED_TOKEN; }
 function setToken(t){ localStorage.setItem(LS_KEY, t.trim()); }
+function normalizeToken(v){
+  if(!v) return "";
+  v = String(v).trim();
+  const m = /wmsAuthSign=([^&\s]+)/.exec(v); if(m) v = decodeURIComponent(m[1]);
+  return v.split('||')[0].trim();
+}
+// Does this token actually authorize a stream? Streams send CORS *, so we can check.
+function tokenWorks(t){
+  if(!t || t.length < 40) return Promise.resolve(false);
+  return fetch(PROBE + '?wmsAuthSign=' + encodeURIComponent(t), {cache:'no-store'})
+    .then(r => r.ok).catch(() => false);
+}
+// Pick the first token that genuinely works, in priority order:
+// URL #token=… (from an iOS Shortcut) > saved > baked. Self-heals a bad saved token.
+async function initToken(){
+  const hashTok = normalizeToken(new URLSearchParams(location.hash.slice(1)).get('token'));
+  if(hashTok){ history.replaceState(null,'',location.pathname+location.search); }
+  const stored = localStorage.getItem(LS_KEY);
+  const candidates = [];
+  if(hashTok) candidates.push(hashTok);
+  if(stored)  candidates.push(stored);
+  candidates.push(BAKED_TOKEN);
+  for(const t of candidates){
+    if(await tokenWorks(t)){
+      activeToken = t;
+      if(t !== stored) setToken(t);   // remember the working one, replace any bad saved token
+      tokenValid = true;
+      showBanner(false);
+      return true;
+    }
+  }
+  activeToken = BAKED_TOKEN;           // nothing worked → prompt a refresh
+  tokenValid = false;
+  showBanner(true);
+  return false;
+}
 
 // token body is base64 of: server_time=...&hash_value=...&validminutes=1440&id=...
 function tokenExpiry(t){
@@ -200,16 +236,16 @@ function tokenExpiry(t){
     return new Date(base.getTime() + parseInt(vm[1],10)*60000);
   }catch(e){ return null; }
 }
+let tokenValid = false;   // set by initToken() from a real stream probe
 function updateTokenChip(){
-  const exp = tokenExpiry(getToken());
   const dot = document.getElementById('tokDot');
   const lbl = document.getElementById('tokStatus');
-  if(!exp){ dot.className='dot bad'; lbl.textContent='token: unknown'; return false; }
-  const ms = exp - new Date();
-  if(ms<=0){ dot.className='dot bad'; lbl.textContent='token expired'; showBanner(true); return false; }
-  const h = Math.floor(ms/3600000), m = Math.floor(ms%3600000/60000);
+  if(!tokenValid){ dot.className='dot bad'; lbl.textContent='token expired — tap Refresh'; showBanner(true); return false; }
+  const exp = tokenExpiry(getToken());
+  const ms = exp ? (exp - new Date()) : 0;
   dot.className='dot';
-  lbl.textContent = 'token ok · '+(h>0? h+'h '+m+'m':m+'m')+' left';
+  if(ms>0){ const h=Math.floor(ms/3600000), m=Math.floor(ms%3600000/60000); lbl.textContent='token ok · '+(h>0? h+'h '+m+'m':m+'m')+' left'; }
+  else lbl.textContent='token ok';
   showBanner(false);
   return true;
 }
@@ -306,14 +342,20 @@ function reloadAll(){ players.forEach(start); updateTokenChip(); }
 // ---- Refresh modal -------------------------------------------------------
 function openRefresh(){ document.getElementById('modal').classList.add('show'); document.getElementById('tokInput').focus(); }
 function closeRefresh(){ document.getElementById('modal').classList.remove('show'); }
-function applyToken(){
-  let v = document.getElementById('tokInput').value.trim();
-  if(!v){ alert('Paste the token text first.'); return; }
-  // tolerate a pasted URL or "token||timestamp"
-  const m = /wmsAuthSign=([^&\s]+)/.exec(v); if(m) v = decodeURIComponent(m[1]);
-  v = v.split('||')[0].trim();
-  if(v.length < 40){ alert('That doesn\'t look like a valid token.'); return; }
-  setToken(v);
+async function applyToken(){
+  const btn = document.getElementById('applyBtn');
+  const err = document.getElementById('tokErr');
+  const v = normalizeToken(document.getElementById('tokInput').value);
+  err.textContent = '';
+  if(v.length < 40){ err.textContent = "That doesn't look like a token — copy the whole line."; return; }
+  btn.disabled = true; btn.textContent = 'Checking…';
+  const ok = await tokenWorks(v);
+  btn.disabled = false; btn.textContent = 'Apply';
+  if(!ok){
+    err.textContent = "That token was rejected — a character was probably dropped while copying. Select the whole line and try again.";
+    return;
+  }
+  activeToken = v; tokenValid = true; setToken(v);
   document.getElementById('tokInput').value='';
   closeRefresh();
   reloadAll();
@@ -323,9 +365,12 @@ document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeRefresh(); }
 
 // ---- Go -------------------------------------------------------------------
 CAMS.forEach(makeTile);
-updateTokenChip();
+(async () => {
+  await initToken();          // pick a token that actually works (self-heals bad saved token)
+  updateTokenChip();
+  reloadAll();
+})();
 setInterval(updateTokenChip, 60000);
-reloadAll();
 </script>
 </body>
 </html>
