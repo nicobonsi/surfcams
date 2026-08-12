@@ -69,6 +69,35 @@
   }
   .tile.expanded .exitbtn{display:block}
   .tile.expanded .tools{display:none}
+
+  /* discreet forecast overlay (top-left, over the sky) */
+  .wx{
+    position:absolute;top:10px;left:10px;z-index:6;
+    font:10.5px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:#eaf2fb;background:rgba(4,14,24,.42);backdrop-filter:blur(3px);
+    border:1px solid rgba(255,255,255,.10);border-radius:9px;padding:6px 8px;
+    max-width:52%;opacity:.72;transition:opacity .15s;user-select:none;
+  }
+  .tile:hover .wx{opacity:.96}
+  .wx-tabs{display:flex;gap:3px;margin-bottom:5px}
+  .wx-tabs button{
+    font:inherit;font-weight:600;color:var(--dim);background:transparent;
+    border:1px solid transparent;border-radius:6px;padding:2px 6px;cursor:pointer;line-height:1.2;
+  }
+  .wx-tabs button.on{color:#052235;background:var(--accent);border-color:var(--accent)}
+  .wx-tides{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:5px;color:#cfe3f5}
+  .wx-tides .t .ar{color:#5fd08a}
+  .wx-tides .t .ar.lo{color:#e6b25a}
+  .wx-h{display:none;color:var(--dim);margin-left:2px}
+  .wx-row{display:grid;grid-template-columns:auto auto auto auto;gap:2px 8px;align-items:baseline}
+  .wx-row .hh{color:var(--dim)}
+  .wx-row .u{color:var(--dim);font-size:.85em}
+  .wx-empty{color:var(--dim)}
+  /* larger & fully opaque when the cam fills the page */
+  .tile.expanded .wx{font-size:15px;opacity:.95;top:18px;left:18px;padding:10px 13px;max-width:340px;border-radius:12px}
+  .tile.expanded .wx-h{display:inline}
+  .arrange .wx{display:none !important}   /* free the top-left corner for reorder controls */
+  @media (max-width:560px){ .wx{font-size:9.5px;padding:5px 6px} }
   .cap{
     position:absolute;left:0;right:0;bottom:0;z-index:5;
     display:flex;align-items:center;gap:10px;
@@ -246,7 +275,7 @@ let cams = loadCams();
 let arrangeMode = false;
 
 // Baked-in token (valid ~24h from build). Refresh overrides it in localStorage.
-const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMi8yMDI2IDI6NTA6NTcgUE0maGFzaF92YWx1ZT01b1hmZHUvMXl4dUlEV0VONENhVWZBPT0mdmFsaWRtaW51dGVzPTE0NDAmaWQ9ZjQ2MzEwM2MtODViMS00NWQxLThkZTktOTdjODNmNTQ1MTgw";
+const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMi8yMDI2IDM6MjU6MTggUE0maGFzaF92YWx1ZT0wOWNnMTNPV0t1SHdMZmVNcnZkS0ZnPT0mdmFsaWRtaW51dGVzPTE0NDAmaWQ9YzkxYTI4ODItYTAwZS00M2VkLThiZGUtODM3YzJhYzgyNTFk";
 const LS_KEY = "beachcam_vtoken";
 // A token-protected stream we can probe to check whether a token is actually valid.
 const PROBE = "https://video-auth1.iol.pt/auth-beachcam/carcavelos/playlist.m3u8";
@@ -334,12 +363,54 @@ function signedUrl(cam){
   return cam.url + (cam.auth ? ('?wmsAuthSign='+encodeURIComponent(t)) : '');
 }
 
+// ---- Forecast overlay (data from same-origin forecast.json) --------------
+let FORECAST = null;
+async function loadForecast(){
+  try{ const r = await fetch('./forecast.json?ts=' + Date.now(), {cache:'no-store'}); if(r.ok) FORECAST = await r.json(); }
+  catch(e){ FORECAST = null; }
+}
+const WX_TIMES = ['09:00','12:00','15:00','18:00'];
+function wxDayLabel(day, i){
+  if(i===0) return 'Hoje';
+  return (day.weekday||'').slice(0,3) || ('D+'+i);
+}
+function fillWx(P){
+  const spot = FORECAST && FORECAST.spots && FORECAST.spots[P.cam.slug];
+  const el = P.wxEl;
+  if(!spot || !spot.days || !spot.days.length){ if(el) el.style.display='none'; return; }
+  el.style.display = '';
+  const di = Math.min(P.wxDay||0, spot.days.length-1);
+  const day = spot.days[di];
+  const tabs = spot.days.map((d,i)=>`<button data-d="${i}" class="${i===di?'on':''}" title="${esc((d.weekday||'')+' '+(d.date||''))}">${esc(wxDayLabel(d,i))}</button>`).join('');
+  const tides = (day.tides||[]).map(t=>{
+    const up = t.type==='high';
+    return `<span class="t"><span class="ar ${up?'':'lo'}">${up?'▲':'▼'}</span>${esc(t.t)}${t.h?`<span class="wx-h">${esc(t.h)}m</span>`:''}</span>`;
+  }).join('');
+  const rows = WX_TIMES.map(tm=>{
+    const hh = day.hours && day.hours[tm];
+    const h = tm.slice(0,2);
+    if(!hh) return `<span class="hh">${h}h</span><span>–</span><span>–</span><span>–</span>`;
+    return `<span class="hh">${h}h</span>`
+         + `<span>${esc(hh.wh)}<span class="u">m</span></span>`
+         + `<span>${esc(hh.pd)}<span class="u">s</span></span>`
+         + `<span>${esc(hh.ws)}<span class="u">km/h</span> ${esc(hh.wd)}</span>`;
+  }).join('');
+  el.innerHTML = `<div class="wx-tabs">${tabs}</div>`
+    + (tides?`<div class="wx-tides">${tides}</div>`:'')
+    + `<div class="wx-row">${rows}</div>`;
+  el.querySelectorAll('.wx-tabs button').forEach(b=>{
+    b.onclick = e=>{ e.stopPropagation(); P.wxDay = +b.getAttribute('data-d'); fillWx(P); };
+  });
+  el.onclick = e=> e.stopPropagation();   // don't trigger tile expand
+}
+
 function makeTile(cam, i){
   const tile = document.createElement('div');
   tile.className = 'tile';
   tile.innerHTML = `
     <video muted playsinline autoplay></video>
     <div class="overlay"><div class="spinner"></div><div class="msg">Connecting…</div></div>
+    <div class="wx" style="display:none"></div>
     <button class="exitbtn" title="Back to grid">✕ Close</button>
     <div class="editctl">
       <button class="up" title="Move up">▲</button>
@@ -363,8 +434,9 @@ function makeTile(cam, i){
   const [bReload,bMute,bOpen] = tile.querySelectorAll('.tools button');
   const [bUp,bDown,bRm] = tile.querySelectorAll('.editctl button');
 
-  const P = {cam, tile, video, overlay, hls:null};
+  const P = {cam, tile, video, overlay, hls:null, wxEl: tile.querySelector('.wx'), wxDay:0};
   players.push(P);
+  fillWx(P);
 
   bReload.onclick = e=>{ e.stopPropagation(); start(P); };
   bMute.onclick = e=>{ e.stopPropagation(); video.muted=!video.muted; bMute.textContent = video.muted?'🔇':'🔊'; if(!video.muted) video.play().catch(()=>{}); };
@@ -536,7 +608,7 @@ document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeRefresh(); 
 
 // ---- Go -------------------------------------------------------------------
 (async () => {
-  await initToken();          // pick a token that actually works (self-heals bad saved token)
+  await Promise.all([initToken(), loadForecast()]);   // token + forecast overlay data
   render();                   // build tiles from the saved list and start streams
 })();
 setInterval(updateTokenChip, 60000);
