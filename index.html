@@ -46,14 +46,29 @@
   main{padding:20px 22px 40px;max-width:1500px;margin:0 auto}
   .grid{
     display:grid;gap:16px;
-    grid-template-columns:repeat(auto-fit,minmax(360px,1fr));
+    grid-template-columns:repeat(2,1fr);   /* always 2 side by side, all same size */
   }
   .tile{
     position:relative;border:1px solid var(--line);border-radius:14px;overflow:hidden;
-    background:#04101c;box-shadow:0 10px 30px rgba(0,0,0,.35);aspect-ratio:16/9;
+    background:#04101c;box-shadow:0 10px 30px rgba(0,0,0,.35);aspect-ratio:16/9;cursor:pointer;
   }
-  .tile.wide{grid-column:1/-1;aspect-ratio:21/9}
   .tile video{width:100%;height:100%;object-fit:cover;display:block;background:#04101c}
+
+  /* tap a cam → fill the whole page; ✕ to go back */
+  body.has-expanded{overflow:hidden}
+  body.has-expanded main > :not(.grid),
+  body.has-expanded header{filter:none}
+  .tile.expanded{
+    position:fixed;inset:0;width:100vw;height:100vh;aspect-ratio:auto;
+    z-index:90;border:none;border-radius:0;cursor:default;box-shadow:none;
+  }
+  .tile.expanded video{object-fit:contain;background:#000}
+  .exitbtn{
+    position:absolute;top:14px;right:14px;z-index:95;display:none;
+    padding:9px 14px;font-size:15px;background:rgba(4,16,28,.82);border:1px solid rgba(255,255,255,.25);
+  }
+  .tile.expanded .exitbtn{display:block}
+  .tile.expanded .tools{display:none}
   .cap{
     position:absolute;left:0;right:0;bottom:0;z-index:5;
     display:flex;align-items:center;gap:10px;
@@ -170,8 +185,8 @@
 </main>
 
 <footer>
-  <b>＋ Add cam</b> to pick from every BeachCam location · <b>✎ Arrange</b> to reorder (▲▼) or remove (✕) — the top cam is the big one.
-  Hover a cam for fullscreen &amp; reload. Your layout and token are saved only in this browser.
+  <b>Tap a cam</b> to make it fill the page (✕ to go back) · <b>＋ Add cam</b> to pick from every BeachCam location · <b>✎ Arrange</b> to reorder (▲▼) or remove (✕).
+  Your layout and token are saved only in this browser.
 </footer>
 
 <!-- token refresh modal -->
@@ -231,7 +246,7 @@ let cams = loadCams();
 let arrangeMode = false;
 
 // Baked-in token (valid ~24h from build). Refresh overrides it in localStorage.
-const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMS8yMDI2IDEyOjU4OjI1IFBNJmhhc2hfdmFsdWU9T1dtc0U0V25uNWdJbGhRYnk1Wk9kUT09JnZhbGlkbWludXRlcz0xNDQwJmlkPWVlOWVhM2Y0LWY5NzctNDEzYi05YjI4LTYxOGI5OGRhYjU2Yg==";
+const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMi8yMDI2IDI6NTA6NTcgUE0maGFzaF92YWx1ZT01b1hmZHUvMXl4dUlEV0VONENhVWZBPT0mdmFsaWRtaW51dGVzPTE0NDAmaWQ9ZjQ2MzEwM2MtODViMS00NWQxLThkZTktOTdjODNmNTQ1MTgw";
 const LS_KEY = "beachcam_vtoken";
 // A token-protected stream we can probe to check whether a token is actually valid.
 const PROBE = "https://video-auth1.iol.pt/auth-beachcam/carcavelos/playlist.m3u8";
@@ -321,10 +336,11 @@ function signedUrl(cam){
 
 function makeTile(cam, i){
   const tile = document.createElement('div');
-  tile.className = 'tile' + (i===0 ? ' wide' : '');
+  tile.className = 'tile';
   tile.innerHTML = `
     <video muted playsinline autoplay></video>
     <div class="overlay"><div class="spinner"></div><div class="msg">Connecting…</div></div>
+    <button class="exitbtn" title="Back to grid">✕ Close</button>
     <div class="editctl">
       <button class="up" title="Move up">▲</button>
       <button class="down" title="Move down">▼</button>
@@ -332,7 +348,6 @@ function makeTile(cam, i){
     </div>
     <div class="tools">
       <button title="Reload">↻</button>
-      <button title="Fullscreen">⛶</button>
       <button title="Mute/unmute">🔇</button>
       <button title="Open on BeachCam">↗</button>
     </div>
@@ -344,17 +359,22 @@ function makeTile(cam, i){
 
   const video = tile.querySelector('video');
   const overlay = tile.querySelector('.overlay');
-  const [bReload,bFull,bMute,bOpen] = tile.querySelectorAll('.tools button');
+  const bExit = tile.querySelector('.exitbtn');
+  const [bReload,bMute,bOpen] = tile.querySelectorAll('.tools button');
   const [bUp,bDown,bRm] = tile.querySelectorAll('.editctl button');
 
   const P = {cam, tile, video, overlay, hls:null};
   players.push(P);
 
-  bReload.onclick = ()=> start(P);
-  bFull.onclick = ()=> { (tile.requestFullscreen||tile.webkitRequestFullscreen).call(tile); };
-  bMute.onclick = ()=> { video.muted=!video.muted; bMute.textContent = video.muted?'🔇':'🔊'; if(!video.muted) video.play().catch(()=>{}); };
-  bOpen.onclick = ()=> window.open(cam.slug ? pageUrl(cam) : (cam.page||'https://beachcam.meo.pt/livecams/'),'_blank');
-  video.onclick  = ()=> { if(video.paused) video.play().catch(()=>{}); };
+  bReload.onclick = e=>{ e.stopPropagation(); start(P); };
+  bMute.onclick = e=>{ e.stopPropagation(); video.muted=!video.muted; bMute.textContent = video.muted?'🔇':'🔊'; if(!video.muted) video.play().catch(()=>{}); };
+  bOpen.onclick = e=>{ e.stopPropagation(); window.open(cam.slug ? pageUrl(cam) : (cam.page||'https://beachcam.meo.pt/livecams/'),'_blank'); };
+  bExit.onclick = e=>{ e.stopPropagation(); collapseTile(); };
+  // Tap the cam to make it fill the page (disabled while arranging; ignore tool-button taps)
+  tile.addEventListener('click', e=>{
+    if(arrangeMode || e.target.closest('.tools,.editctl,.exitbtn')) return;
+    if(tile.classList.contains('expanded')) collapseTile(); else expandTile(P);
+  });
 
   bUp.disabled = i===0;
   bDown.disabled = i===cams.length-1;
@@ -442,10 +462,23 @@ function moveCam(i, dir){
 }
 function removeCam(i){ cams.splice(i,1); saveCams(); render(); }
 function toggleArrange(){
+  collapseTile();
   arrangeMode = !arrangeMode;
   document.body.classList.toggle('arrange', arrangeMode);
   document.getElementById('arrangeBtn').classList.toggle('on', arrangeMode);
   render();
+}
+
+// ---- Tap-to-expand (in-page fullscreen) ---------------------------------
+function expandTile(P){
+  collapseTile();
+  P.tile.classList.add('expanded');
+  document.body.classList.add('has-expanded');
+}
+function collapseTile(){
+  const t = document.querySelector('.tile.expanded');
+  if(t) t.classList.remove('expanded');
+  document.body.classList.remove('has-expanded');
 }
 function addCam(c){
   if(cams.some(x => x.url === c.url)) return;
@@ -499,7 +532,7 @@ async function applyToken(){
   reloadAll();
 }
 document.getElementById('modal').addEventListener('click', e=>{ if(e.target.id==='modal') closeRefresh(); });
-document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeRefresh(); closeCatalog(); } });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeRefresh(); closeCatalog(); collapseTile(); } });
 
 // ---- Go -------------------------------------------------------------------
 (async () => {
