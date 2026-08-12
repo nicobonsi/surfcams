@@ -278,7 +278,7 @@ let cams = loadCams();
 let arrangeMode = false;
 
 // Baked-in token (valid ~24h from build). Refresh overrides it in localStorage.
-const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMi8yMDI2IDM6NTY6NTYgUE0maGFzaF92YWx1ZT1FdWp1M1hhbStpNCtPWVg0N1FpUTVRPT0mdmFsaWRtaW51dGVzPTE0NDAmaWQ9MzEzZWM4ZjctYWFjMi00NTZiLTliYmYtNzU2ZWQ3YTBkZWM5";
+const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMi8yMDI2IDM6NTQ6MTAgUE0maGFzaF92YWx1ZT02R25FUEwwSUpjem9EeEN3TzFZNmV3PT0mdmFsaWRtaW51dGVzPTE0NDAmaWQ9ZDM1M2UxZjgtYjA1MS00N2JiLWE1MzUtZjA3MWQ4ZDA0MjMz";
 const LS_KEY = "beachcam_vtoken";
 // A token-protected stream we can probe to check whether a token is actually valid.
 const PROBE = "https://video-auth1.iol.pt/auth-beachcam/carcavelos/playlist.m3u8";
@@ -396,12 +396,13 @@ function fillWx(P){
   }).join('');
   const hrs = WX_TIMES.map(tm => day.hours && day.hours[tm]);
   const hdr = `<span class="lbl"></span>` + WX_TIMES.map(tm=>`<span class="hdr">${tm.slice(0,2)}h</span>`).join('');
-  const rWave = `<span class="lbl">wave</span>` + hrs.map(h=>`<span class="v">${h&&h.wh!=null?esc(h.wh)+'<small>m</small>':'–'}</span>`).join('');
-  const rPer  = `<span class="lbl">per</span>`  + hrs.map(h=>`<span class="v">${h&&h.pd!=null?esc(h.pd)+'<small>s</small>':'–'}</span>`).join('');
-  const rWind = `<span class="lbl">wind</span>` + hrs.map(h=>`<span class="v">${h&&h.ws!=null?esc(h.ws)+'<small> '+esc(h.wd||'')+'</small>':'–'}</span>`).join('');
+  const rSurf  = `<span class="lbl">Surf</span>`   + hrs.map(h=>`<span class="v">${h&&h.wh!=null?esc(h.wh)+'<small>m</small>':'–'}</span>`).join('');
+  const rSwell = `<span class="lbl">Swell</span>`  + hrs.map(h=>`<span class="v">${h&&h.sw!=null?esc(h.sw)+'<small>m</small>':'–'}</span>`).join('');
+  const rPer   = `<span class="lbl">Period</span>` + hrs.map(h=>`<span class="v">${h&&h.pd!=null?esc(h.pd)+'<small>s</small>':'–'}</span>`).join('');
+  const rWind  = `<span class="lbl">Wind</span>`   + hrs.map(h=>`<span class="v">${h&&h.ws!=null?esc(h.ws)+'<small> '+esc(h.wd||'')+'</small>':'–'}</span>`).join('');
   el.innerHTML = `<div class="wx-tabs">${tabs}</div>`
     + (tides?`<div class="wx-tides">${tides}</div>`:'')
-    + `<div class="wx-grid">${hdr}${rWave}${rPer}${rWind}</div>`
+    + `<div class="wx-grid">${hdr}${rSurf}${rSwell}${rPer}${rWind}</div>`
     + `<div class="wx-src">via ${spot.src==='surfline'?'Surfline':'BeachCam'}</div>`;
   el.querySelectorAll('.wx-tabs button').forEach(b=>{
     b.onclick = e=>{ e.stopPropagation(); P.wxDay = +b.getAttribute('data-d'); fillWx(P); };
