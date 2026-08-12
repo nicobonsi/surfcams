@@ -94,6 +94,7 @@
   .wx-grid .hdr{color:var(--dim);font-weight:700;text-align:right}
   .wx-grid .v{text-align:right;font-variant-numeric:tabular-nums}
   .wx-grid .v small{color:var(--dim)}
+  .wx-src{color:var(--dim);opacity:.75;font-size:.82em;text-align:right;margin-top:3px}
   .wx-empty{color:var(--dim)}
   /* larger & fully opaque when the cam fills the page */
   .tile.expanded .wx{font-size:14px;opacity:.96;top:18px;left:18px;padding:11px 14px;border-radius:12px}
@@ -277,7 +278,7 @@ let cams = loadCams();
 let arrangeMode = false;
 
 // Baked-in token (valid ~24h from build). Refresh overrides it in localStorage.
-const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMi8yMDI2IDM6MjU6MTggUE0maGFzaF92YWx1ZT0wOWNnMTNPV0t1SHdMZmVNcnZkS0ZnPT0mdmFsaWRtaW51dGVzPTE0NDAmaWQ9YzkxYTI4ODItYTAwZS00M2VkLThiZGUtODM3YzJhYzgyNTFk";
+const BAKED_TOKEN = "c2VydmVyX3RpbWU9OC8xMi8yMDI2IDM6NTQ6MTAgUE0maGFzaF92YWx1ZT02R25FUEwwSUpjem9EeEN3TzFZNmV3PT0mdmFsaWRtaW51dGVzPTE0NDAmaWQ9ZDM1M2UxZjgtYjA1MS00N2JiLWE1MzUtZjA3MWQ4ZDA0MjMz";
 const LS_KEY = "beachcam_vtoken";
 // A token-protected stream we can probe to check whether a token is actually valid.
 const PROBE = "https://video-auth1.iol.pt/auth-beachcam/carcavelos/playlist.m3u8";
@@ -372,9 +373,14 @@ async function loadForecast(){
   catch(e){ FORECAST = null; }
 }
 const WX_TIMES = ['09:00','12:00','15:00','18:00'];
+const EN_WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function wxDayLabel(day, i){
-  if(i===0) return 'Hoje';
-  return (day.weekday||'').slice(0,3) || ('D+'+i);
+  if(i===0) return 'Today';
+  if(day && day.date){                      // derive English weekday from the date, source-independent
+    const p = String(day.date).split('/'); const dd=+p[0], mm=+p[1];
+    if(dd && mm){ const now=new Date(); const dt=new Date(now.getFullYear(), mm-1, dd); if(!isNaN(dt)) return EN_WD[dt.getDay()]; }
+  }
+  return 'D+'+i;
 }
 function fillWx(P){
   const spot = FORECAST && FORECAST.spots && FORECAST.spots[P.cam.slug];
@@ -390,12 +396,13 @@ function fillWx(P){
   }).join('');
   const hrs = WX_TIMES.map(tm => day.hours && day.hours[tm]);
   const hdr = `<span class="lbl"></span>` + WX_TIMES.map(tm=>`<span class="hdr">${tm.slice(0,2)}h</span>`).join('');
-  const rWave = `<span class="lbl">ond</span>` + hrs.map(h=>`<span class="v">${h?esc(h.wh)+'<small>m</small>':'–'}</span>`).join('');
-  const rPer  = `<span class="lbl">per</span>` + hrs.map(h=>`<span class="v">${h?esc(h.pd)+'<small>s</small>':'–'}</span>`).join('');
-  const rWind = `<span class="lbl">vento</span>` + hrs.map(h=>`<span class="v">${h?esc(h.ws)+'<small> '+esc(h.wd)+'</small>':'–'}</span>`).join('');
+  const rWave = `<span class="lbl">wave</span>` + hrs.map(h=>`<span class="v">${h&&h.wh!=null?esc(h.wh)+'<small>m</small>':'–'}</span>`).join('');
+  const rPer  = `<span class="lbl">per</span>`  + hrs.map(h=>`<span class="v">${h&&h.pd!=null?esc(h.pd)+'<small>s</small>':'–'}</span>`).join('');
+  const rWind = `<span class="lbl">wind</span>` + hrs.map(h=>`<span class="v">${h&&h.ws!=null?esc(h.ws)+'<small> '+esc(h.wd||'')+'</small>':'–'}</span>`).join('');
   el.innerHTML = `<div class="wx-tabs">${tabs}</div>`
     + (tides?`<div class="wx-tides">${tides}</div>`:'')
-    + `<div class="wx-grid">${hdr}${rWave}${rPer}${rWind}</div>`;
+    + `<div class="wx-grid">${hdr}${rWave}${rPer}${rWind}</div>`
+    + `<div class="wx-src">via ${spot.src==='surfline'?'Surfline':'BeachCam'}</div>`;
   el.querySelectorAll('.wx-tabs button').forEach(b=>{
     b.onclick = e=>{ e.stopPropagation(); P.wxDay = +b.getAttribute('data-d'); fillWx(P); };
   });
