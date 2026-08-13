@@ -430,7 +430,6 @@ function makeTile(cam, i){
     </div>
     <div class="tools">
       <button title="Reload">↻</button>
-      <button title="Mute/unmute">🔇</button>
       <button title="Open on BeachCam">↗</button>
     </div>
     <div class="cap">
@@ -442,7 +441,7 @@ function makeTile(cam, i){
   const video = tile.querySelector('video');
   const overlay = tile.querySelector('.overlay');
   const bExit = tile.querySelector('.exitbtn');
-  const [bReload,bMute,bOpen] = tile.querySelectorAll('.tools button');
+  const [bReload,bOpen] = tile.querySelectorAll('.tools button');
   const [bUp,bDown,bRm] = tile.querySelectorAll('.editctl button');
 
   const P = {cam, tile, video, overlay, hls:null, wxEl: tile.querySelector('.wx'), wxDay:0};
@@ -450,7 +449,6 @@ function makeTile(cam, i){
   fillWx(P);
 
   bReload.onclick = e=>{ e.stopPropagation(); start(P); };
-  bMute.onclick = e=>{ e.stopPropagation(); video.muted=!video.muted; bMute.textContent = video.muted?'🔇':'🔊'; if(!video.muted) video.play().catch(()=>{}); };
   bOpen.onclick = e=>{ e.stopPropagation(); window.open(cam.slug ? pageUrl(cam) : (cam.page||'https://beachcam.meo.pt/livecams/'),'_blank'); };
   bExit.onclick = e=>{ e.stopPropagation(); collapseTile(); };
   // Tap the cam to make it fill the page (disabled while arranging; ignore tool-button taps)
