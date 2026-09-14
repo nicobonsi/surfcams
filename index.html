@@ -502,8 +502,22 @@ function setOverlay(P, mode, msg){
     : `<div class="spinner"></div><div class="msg">${msg||'Connecting…'}</div>`;
 }
 
-function start(P){
+// BeachCam takes individual cams off air routinely. Say so plainly, and keep
+// checking back so the tile recovers on its own when the cam returns.
+function camOffline(P){
+  setOverlay(P,'err','Cam offline — BeachCam isn\u2019t broadcasting this one right now.');
+  if(P.hls){ try{P.hls.destroy();}catch(e){} P.hls=null; }
+  clearTimeout(P.retry);
+  P.offlineTries = (P.offlineTries||0) + 1;
+  if(P.offlineTries <= 10){
+    P.retry = setTimeout(()=>start(P, true), 90000);   // every 90s, ~15 min
+  }
+}
+
+function start(P, isRetry){
   const {video} = P;
+  clearTimeout(P.retry);
+  if(!isRetry) P.offlineTries = 0;
   setOverlay(P,'load','Connecting…');
   if(P.hls){ P.hls.destroy(); P.hls=null; }
   const src = signedUrl(P.cam);
@@ -516,8 +530,17 @@ function start(P){
     hls.on(Hls.Events.MANIFEST_PARSED, ()=>{ setOverlay(P,'hide'); video.play().catch(()=>{}); });
     hls.on(Hls.Events.ERROR, (_e,data)=>{
       if(!data.fatal) return;
-      const auth = data.response && (data.response.code===403 || data.response.code===401);
-      if(auth || (data.details && /manifestLoad/i.test(data.details) && P.cam.auth && !updateTokenChip())){
+      const code = data.response && data.response.code;
+      if(code===403 || code===401){
+        setOverlay(P,'err','Access denied — token likely expired. Click “Refresh token”.');
+        showBanner(true);
+        return;
+      }
+      // The server authorises before it looks up the cam, so 404 means the token
+      // is fine and BeachCam just isn't serving this one. Blaming the token here
+      // is what sent people off refreshing a perfectly good one.
+      if(code===404){ camOffline(P); return; }
+      if(!code && data.details && /manifestLoad/i.test(data.details) && P.cam.auth && !updateTokenChip()){
         setOverlay(P,'err','Access denied — token likely expired. Click “Refresh token”.');
         showBanner(true);
         return;
@@ -530,18 +553,27 @@ function start(P){
     // Safari native HLS
     video.src = src;
     video.addEventListener('loadedmetadata', ()=>{ setOverlay(P,'hide'); video.play().catch(()=>{}); }, {once:true});
-    video.addEventListener('error', ()=> setOverlay(P,'err','Access denied or stream error. Try “Refresh token”.'), {once:true});
+    // Native HLS hides the status code, so ask the URL directly before blaming anything.
+    video.addEventListener('error', async ()=>{
+      let code = 0;
+      try{ code = (await fetch(src, {cache:'no-store'})).status; }catch(e){}
+      if(code===403 || code===401){
+        setOverlay(P,'err','Access denied — token likely expired. Click “Refresh token”.');
+        showBanner(true);
+      } else if(code===404){ camOffline(P); }
+      else { setOverlay(P,'err','Stream error — tap ↻ to retry.'); }
+    }, {once:true});
   } else {
     setOverlay(P,'err','HLS not supported in this browser.');
   }
 }
 
-function startAll(){ players.forEach(start); updateTokenChip(); }
+function startAll(){ players.forEach(P => start(P)); updateTokenChip(); }   // not forEach(start): it would pass the index as isRetry
 function reloadAll(){ startAll(); }
 
 // Rebuild the whole grid from `cams` (destroys old players first).
 function render(){
-  players.forEach(P => { if(P.hls){ try{P.hls.destroy();}catch(e){} } });
+  players.forEach(P => { clearTimeout(P.retry); if(P.hls){ try{P.hls.destroy();}catch(e){} } });
   players = [];
   grid.innerHTML = '';
   if(cams.length === 0){
