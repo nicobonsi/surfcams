@@ -283,10 +283,15 @@ let cams = loadCams();
 let arrangeMode = false;
 
 // Baked-in token (valid ~24h from build). Refresh overrides it in localStorage.
-const BAKED_TOKEN = "c2VydmVyX3RpbWU9OS8xNC8yMDI2IDM6NTc6MyBQTSZoYXNoX3ZhbHVlPXFZSTltM2E1TFV2T21xaWRjWWJKZlE9PSZ2YWxpZG1pbnV0ZXM9MTQ0MCZpZD02ZTc2NmQwNS1kMjZlLTQxOTctODc5Zi1hNzQ4MDEzMjVhNTk=";
+const BAKED_TOKEN = "c2VydmVyX3RpbWU9OS8xNC8yMDI2IDQ6NDk6NDggUE0maGFzaF92YWx1ZT1BbGErLzlGL0ZuTlMxRFFOS1MveGhRPT0mdmFsaWRtaW51dGVzPTE0NDAmaWQ9Yjk5OThiNDQtM2NiOC00Y2UwLWFiNTQtYTllOTkxZTBjMThk";
 const LS_KEY = "beachcam_vtoken";
-// A token-protected stream we can probe to check whether a token is actually valid.
-const PROBE = "https://video-auth1.iol.pt/auth-beachcam/carcavelos/playlist.m3u8";
+// Token-protected streams we probe to check whether a token is actually valid.
+// Several, spread across the catalog, so one dark cam can't decide the answer.
+const PROBES = (() => {
+  const urls = CATALOG.filter(c => c.auth).map(c => c.url);
+  const n = Math.min(4, urls.length);
+  return Array.from({length: n}, (_, i) => urls[Math.floor(i * urls.length / n)]);
+})();
 
 // The token currently in use (validated). Falls back to baked until proven otherwise.
 let activeToken = BAKED_TOKEN;
@@ -300,11 +305,24 @@ function normalizeToken(v){
   const m = /wmsAuthSign=([^&\s]+)/.exec(v); if(m) v = decodeURIComponent(m[1]);
   return v.split('||')[0].trim();
 }
-// Does this token actually authorize a stream? Streams send CORS *, so we can check.
-function tokenWorks(t){
-  if(!t || t.length < 40) return Promise.resolve(false);
-  return fetch(PROBE + '?wmsAuthSign=' + encodeURIComponent(t), {cache:'no-store'})
-    .then(r => r.ok).catch(() => false);
+// Does this token authorize a stream? Streams send CORS *, so we can read the
+// status. The server checks the token BEFORE it looks up the cam, so:
+//   403 -> the token was rejected (the only authoritative "no")
+//   200 -> token good, cam is live
+//   404 -> token good, that cam is simply offline right now
+// Treating 404 as a rejection is what made a valid token look expired whenever
+// the one hardcoded probe cam went dark. Returns 'ok' | 'bad' | 'unknown'.
+async function probeToken(t){
+  if(!t || t.length < 40) return 'bad';
+  const q = '?wmsAuthSign=' + encodeURIComponent(t);
+  for(const url of PROBES){
+    let r;
+    try{ r = await fetch(url + q, {cache:'no-store'}); }
+    catch(e){ continue; }              // network/CORS hiccup — ask another cam
+    if(r.status === 403) return 'bad';
+    if(r.ok || r.status === 404) return 'ok';
+  }
+  return 'unknown';                    // nothing answered — says nothing about t
 }
 // Pick the first token that genuinely works, in priority order:
 // URL #token=… (from an iOS Shortcut) > saved > baked. Self-heals a bad saved token.
@@ -318,16 +336,25 @@ async function initToken(){
   if(hashTok) candidates.push(hashTok);
   if(stored)  candidates.push(stored);
   candidates.push(BAKED_TOKEN);
+  let unproven = null;                 // first candidate no cam could judge
   for(const t of candidates){
-    if(await tokenWorks(t)){
+    const verdict = await probeToken(t);
+    if(verdict === 'ok'){
       activeToken = t;
       if(t !== stored) setToken(t);   // remember the working one, replace any bad saved token
       tokenValid = true;
       showBanner(false);
       return true;
     }
+    if(verdict === 'unknown' && !unproven) unproven = t;
   }
-  activeToken = BAKED_TOKEN;           // nothing worked → prompt a refresh
+  if(unproven){                        // unreachable, not rejected — don't nag
+    activeToken = unproven;
+    tokenValid = true;
+    showBanner(false);
+    return true;
+  }
+  activeToken = BAKED_TOKEN;           // a real 403 → prompt a refresh
   tokenValid = false;
   showBanner(true);
   return false;
@@ -601,9 +628,9 @@ async function applyToken(){
   err.textContent = '';
   if(v.length < 40){ err.textContent = "That doesn't look like a token — copy the whole line."; return; }
   btn.disabled = true; btn.textContent = 'Checking…';
-  const ok = await tokenWorks(v);
+  const verdict = await probeToken(v);
   btn.disabled = false; btn.textContent = 'Apply';
-  if(!ok){
+  if(verdict === 'bad'){               // only a 403 is an actual rejection
     err.textContent = "That token was rejected — a character was probably dropped while copying. Select the whole line and try again.";
     return;
   }
